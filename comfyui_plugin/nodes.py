@@ -1,39 +1,34 @@
 # -*- coding: utf-8 -*-
-"""ComfyUI 自定义节点：AI 角色三合一参考图集（姿势 + 服装 + 人像 + 三合一合成配方）。"""
+"""ComfyUI custom nodes: AI character reference library (pose + costume + portrait + 3-in-1 recipe).
+
+Locally modified: English node names, sockets, options and prompts (see data/i18n-en.json).
+"""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .routes import find_item, open_reference_image, select_costume_view
+from .routes import find_item, open_reference_image, select_costume_view, tr
 
 if TYPE_CHECKING:
     from PIL import Image
 
-RESIZE_MODES = [
-    "原图尺寸",
-    "指定尺寸（居中裁剪）",
-    "指定尺寸（留白填充）",
-]
+CATEGORY = "AI Character Reference"
+
+RESIZE_ORIGINAL = "original size"
+RESIZE_CROP = "fit (center crop)"
+RESIZE_PAD = "fit (pad)"
+RESIZE_MODES = [RESIZE_ORIGINAL, RESIZE_CROP, RESIZE_PAD]
+
+COSTUME_VIEWS = ["front", "diag", "side", "back"]
 
 STYLE_PRESETS = {
-    "高清日系动漫": (
-        "日系二次元动漫插画风格，精致五官，赛璐璐与厚涂结合，光影通透，高画质杰作",
-        "anime illustration, cel shading and soft lighting, clean lineart, masterpiece, best quality",
-    ),
-    "写实摄影人像": (
-        "电影级写实人像摄影，85mm定焦镜头，真实皮肤质感，自然景深与柔美布光，8K超清",
-        "photorealistic portrait photography, 85mm lens, realistic skin texture, cinematic lighting, 8k",
-    ),
-    "韩系半厚涂插画": (
-        "韩系唯美半厚涂角色立绘，细腻丝滑高光，柔美体积感，高级色彩搭配",
-        "semi-realistic anime character art, smooth rendering, luminous highlights, refined color palette",
-    ),
-    "干净角色设定图": (
-        "游戏角色立绘设定图，干净浅灰/纯白背景，轮廓清晰，服装材质与褶皱细节丰富",
-        "character design reference sheet, clean light background, crisp silhouette, detailed fabric folds",
-    ),
+    "anime (HD)": "anime illustration, cel shading and soft lighting, clean lineart, masterpiece, best quality",
+    "photorealistic portrait": "photorealistic portrait photography, 85mm lens, realistic skin texture, cinematic lighting, 8k",
+    "semi-realistic (K-style)": "semi-realistic anime character art, smooth rendering, luminous highlights, refined color palette",
+    "character design sheet": "character design reference sheet, clean light background, crisp silhouette, detailed fabric folds",
 }
+DEFAULT_STYLE = "anime (HD)"
 
 
 def _pil_to_comfy_tensor(img: Image.Image):
@@ -47,7 +42,7 @@ def _pil_to_comfy_tensor(img: Image.Image):
 
 def _load_pil_image(
     rel_path: str,
-    resize_mode: str = "原图尺寸",
+    resize_mode: str = RESIZE_ORIGINAL,
     width: int = 1024,
     height: int = 1280,
     flip_horizontal: bool = False,
@@ -63,9 +58,9 @@ def _load_pil_image(
     target_w = max(64, int(width))
     target_h = max(64, int(height))
 
-    if resize_mode == "指定尺寸（居中裁剪）":
+    if resize_mode == RESIZE_CROP:
         img = ImageOps.fit(img, (target_w, target_h), method=Image.Resampling.LANCZOS)
-    elif resize_mode == "指定尺寸（留白填充）":
+    elif resize_mode == RESIZE_PAD:
         img = ImageOps.pad(
             img,
             (target_w, target_h),
@@ -76,33 +71,30 @@ def _load_pil_image(
     return img
 
 
-def _build_pose_prompts(item: dict) -> tuple[str, str]:
-    title = item.get("姿势名称") or item.get("标题") or "标准姿势"
-    system = item.get("体系", "")
-    cat = item.get("分类", "")
-    angle = item.get("角度", "正面")
-    zh = f"{angle}视角，动作：{title}（{system}·{cat}）"
-    en = f"{angle} view, pose: {title} ({cat})"
-    return zh, en
+def _pose_prompt(item: dict) -> str:
+    title = tr(item.get("姿势名称") or item.get("标题") or "") or "standard pose"
+    angle = tr(item.get("角度", "")) or "front"
+    cat = tr(item.get("分类", ""))
+    return f"{angle.lower()} view, pose: {title}" + (f" ({cat.lower()})" if cat else "")
 
 
-def _build_costume_prompts(item: dict) -> tuple[str, str]:
-    title = item.get("服装名称") or item.get("标题") or ""
-    cat = item.get("分类", "")
-    tags = "、".join(item.get("标签", [])[:8])
-    desc_en = item.get("关键词", "") or title
-    zh = f"身穿{cat}：{title}" + (f"（细节：{tags}）" if tags else "")
-    return zh, desc_en
+def _costume_prompts(item: dict) -> tuple[str, str]:
+    """Returns (short description, detailed English keywords)."""
+    keywords = item.get("关键词", "") or ""
+    cat = tr(item.get("分类", ""))
+    tags = [tr(t) for t in item.get("标签", [])[:8]]
+    cat_l = cat.lower()
+    desc = (cat_l if "outfit" in cat_l else f"{cat_l} outfit") if cat else "outfit"
+    if tags:
+        desc += ": " + ", ".join(tags)
+    return desc, keywords or desc
 
 
-def _build_portrait_prompts(item: dict) -> tuple[str, str]:
-    title = item.get("标题", "")
-    section = item.get("分区", "")
-    hair_len = item.get("发长", "")
-    hair_style = item.get("发型名称") or item.get("发型") or ""
-    zh = f"人物面部与发型：{hair_len}、{hair_style}（{section}，{title}）"
-    en = f"character hairstyle and face reference: {hair_len}, {hair_style}"
-    return zh, en
+def _portrait_prompt(item: dict) -> str:
+    hair_len = tr(item.get("发长", ""))
+    hair_style = tr(item.get("发型名称") or item.get("发型") or "")
+    parts = [p.lower() for p in (hair_len, hair_style) if p]
+    return "face and hairstyle reference: " + ", ".join(parts) if parts else "face reference"
 
 
 def _pose_image_rel_path(item: dict, use_depth: bool = False) -> str:
@@ -113,36 +105,35 @@ def _pose_image_rel_path(item: dict, use_depth: bool = False) -> str:
     return raw
 
 
+def _common_inputs(default_id: str) -> dict:
+    return {
+        "image_id": ("STRING", {"default": default_id, "multiline": False}),
+        "resize_mode": (RESIZE_MODES, {"default": RESIZE_ORIGINAL}),
+        "width": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 8}),
+        "height": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
+        "flip_horizontal": ("BOOLEAN", {"default": False}),
+    }
+
+
 class PoseGalleryNode:
-    """从 1,439 张 3D 素体姿势库中选择姿势参考图并输出 IMAGE 与提示词。"""
+    """Pick a pose reference (mannequin or depth map) from 1,439 poses; outputs IMAGE + pose prompt."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
-                "image_id": (
-                    "STRING",
-                    {"default": "full_single_P001_front", "multiline": False},
-                ),
-                "resize_mode": (RESIZE_MODES, {"default": "原图尺寸"}),
-                "width": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 8}),
-                "height": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
-                "flip_horizontal": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {
-                "use_depth": ("BOOLEAN", {"default": False}),
-            },
+            "required": _common_inputs("full_single_P001_front"),
+            "optional": {"use_depth": ("BOOLEAN", {"default": False})},
         }
 
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
-    RETURN_NAMES = ("姿势图", "图片ID", "姿势提示词")
+    RETURN_NAMES = ("pose_image", "image_id", "pose_prompt")
     FUNCTION = "load_pose"
-    CATEGORY = "AI角色三合一参考图集"
+    CATEGORY = CATEGORY
 
     def load_pose(
         self,
         image_id: str = "full_single_P001_front",
-        resize_mode: str = "原图尺寸",
+        resize_mode: str = RESIZE_ORIGINAL,
         width: int = 1024,
         height: int = 1280,
         flip_horizontal: bool = False,
@@ -156,35 +147,28 @@ class PoseGalleryNode:
             height=height,
             flip_horizontal=flip_horizontal,
         )
-        zh_prompt, _ = _build_pose_prompts(item)
-        return (_pil_to_comfy_tensor(pil_img), item["id"], zh_prompt)
+        return (_pil_to_comfy_tensor(pil_img), item["id"], _pose_prompt(item))
 
 
 class CostumeGalleryNode:
-    """从穿搭服装库选择服装及有效视角，输出 IMAGE 与中英文服装 Prompt。"""
+    """Pick an outfit (and view angle) from the costume library; outputs IMAGE + outfit prompts."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
-                "image_id": ("STRING", {"default": "SPR-0001", "multiline": False}),
-                "resize_mode": (RESIZE_MODES, {"default": "原图尺寸"}),
-                "width": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 8}),
-                "height": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
-                "flip_horizontal": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {"costume_view": (["front", "diag", "side", "back"], {"default": "front"})},
+            "required": _common_inputs("SPR-0001"),
+            "optional": {"costume_view": (COSTUME_VIEWS, {"default": "front"})},
         }
 
     RETURN_TYPES = ("IMAGE", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("服装图", "图片ID", "中文服装描述", "英文服装Prompt")
+    RETURN_NAMES = ("costume_image", "image_id", "costume_description", "costume_prompt")
     FUNCTION = "load_costume"
-    CATEGORY = "AI角色三合一参考图集"
+    CATEGORY = CATEGORY
 
     def load_costume(
         self,
         image_id: str = "SPR-0001",
-        resize_mode: str = "原图尺寸",
+        resize_mode: str = RESIZE_ORIGINAL,
         width: int = 1024,
         height: int = 1280,
         flip_horizontal: bool = False,
@@ -198,34 +182,26 @@ class CostumeGalleryNode:
             height=height,
             flip_horizontal=flip_horizontal,
         )
-        zh_prompt, en_prompt = _build_costume_prompts(item)
-        return (_pil_to_comfy_tensor(pil_img), item["id"], zh_prompt, en_prompt)
+        desc, prompt = _costume_prompts(item)
+        return (_pil_to_comfy_tensor(pil_img), item["id"], desc, prompt)
 
 
 class PortraitGalleryNode:
-    """从 1,499 张精细人像与发型库中选择人像参考图并输出 IMAGE 与发型描述。"""
+    """Pick a face/hairstyle reference from 1,499 portraits; outputs IMAGE + hairstyle prompt."""
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "image_id": ("STRING", {"default": "f71f980dde3", "multiline": False}),
-                "resize_mode": (RESIZE_MODES, {"default": "原图尺寸"}),
-                "width": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 8}),
-                "height": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
-                "flip_horizontal": ("BOOLEAN", {"default": False}),
-            }
-        }
+        return {"required": _common_inputs("f71f980dde3")}
 
     RETURN_TYPES = ("IMAGE", "STRING", "STRING")
-    RETURN_NAMES = ("人像图", "图片ID", "人像发型描述")
+    RETURN_NAMES = ("portrait_image", "image_id", "hairstyle_prompt")
     FUNCTION = "load_portrait"
-    CATEGORY = "AI角色三合一参考图集"
+    CATEGORY = CATEGORY
 
     def load_portrait(
         self,
         image_id: str = "f71f980dde3",
-        resize_mode: str = "原图尺寸",
+        resize_mode: str = RESIZE_ORIGINAL,
         width: int = 1024,
         height: int = 1280,
         flip_horizontal: bool = False,
@@ -238,69 +214,59 @@ class PortraitGalleryNode:
             height=height,
             flip_horizontal=flip_horizontal,
         )
-        zh_prompt, _ = _build_portrait_prompts(item)
-        return (_pil_to_comfy_tensor(pil_img), item["id"], zh_prompt)
+        return (_pil_to_comfy_tensor(pil_img), item["id"], _portrait_prompt(item))
 
 
 class CharacterRecipeNode:
-    """三合一角色合成配方节点：同时输出人像图、服装图、姿势图、三合一横向拼图，以及自动组装的中英文合成 Prompt。"""
+    """3-in-1 recipe: outputs portrait, costume, pose images, a side-by-side reference sheet, and assembled prompts."""
 
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "portrait_id": (
-                    "STRING",
-                    {"default": "f71f980dde3", "multiline": False},
-                ),
+                "portrait_id": ("STRING", {"default": "f71f980dde3", "multiline": False}),
                 "costume_id": ("STRING", {"default": "SPR-0001", "multiline": False}),
-                "pose_id": (
-                    "STRING",
-                    {"default": "full_single_P001_front", "multiline": False},
-                ),
-                "style_preset": (
-                    list(STYLE_PRESETS.keys()),
-                    {"default": "高清日系动漫"},
-                ),
+                "pose_id": ("STRING", {"default": "full_single_P001_front", "multiline": False}),
+                "style_preset": (list(STYLE_PRESETS.keys()), {"default": DEFAULT_STYLE}),
                 "extra_prompt": (
                     "STRING",
                     {
                         "default": "",
                         "multiline": True,
-                        "placeholder": "可选补充提示词（例如：银色双眸、教室窗边逆光、微风吹拂发丝）",
+                        "placeholder": "Optional extra prompt (e.g. silver eyes, backlit classroom window, hair in the breeze)",
                     },
                 ),
-                "resize_mode": (RESIZE_MODES, {"default": "指定尺寸（居中裁剪）"}),
+                "resize_mode": (RESIZE_MODES, {"default": RESIZE_CROP}),
                 "width": ("INT", {"default": 1024, "min": 64, "max": 4096, "step": 8}),
                 "height": ("INT", {"default": 1280, "min": 64, "max": 4096, "step": 8}),
                 "flip_pose_horizontal": ("BOOLEAN", {"default": False}),
             },
             "optional": {
                 "use_depth": ("BOOLEAN", {"default": False}),
-                "costume_view": (["front", "diag", "side", "back"], {"default": "front"}),
+                "costume_view": (COSTUME_VIEWS, {"default": "front"}),
             },
         }
 
     RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "IMAGE", "STRING", "STRING")
     RETURN_NAMES = (
-        "人像图",
-        "服装图",
-        "姿势图",
-        "三合一拼图",
-        "中文合成Prompt",
-        "英文合成Prompt",
+        "portrait_image",
+        "costume_image",
+        "pose_image",
+        "reference_sheet",
+        "instruction_prompt",
+        "tag_prompt",
     )
     FUNCTION = "build_recipe"
-    CATEGORY = "AI角色三合一参考图集"
+    CATEGORY = CATEGORY
 
     def build_recipe(
         self,
         portrait_id: str = "f71f980dde3",
         costume_id: str = "SPR-0001",
         pose_id: str = "full_single_P001_front",
-        style_preset: str = "高清日系动漫",
+        style_preset: str = DEFAULT_STYLE,
         extra_prompt: str = "",
-        resize_mode: str = "指定尺寸（居中裁剪）",
+        resize_mode: str = RESIZE_CROP,
         width: int = 1024,
         height: int = 1280,
         flip_pose_horizontal: bool = False,
@@ -311,12 +277,8 @@ class CharacterRecipeNode:
         costume_item = select_costume_view(find_item("costume", costume_id), costume_view)
         pose_item = find_item("pose", pose_id)
 
-        portrait_pil = _load_pil_image(
-            portrait_item["原图"], resize_mode=resize_mode, width=width, height=height
-        )
-        costume_pil = _load_pil_image(
-            costume_item["原图"], resize_mode=resize_mode, width=width, height=height
-        )
+        portrait_pil = _load_pil_image(portrait_item["原图"], resize_mode=resize_mode, width=width, height=height)
+        costume_pil = _load_pil_image(costume_item["原图"], resize_mode=resize_mode, width=width, height=height)
         pose_pil = _load_pil_image(
             _pose_image_rel_path(pose_item, use_depth=use_depth),
             resize_mode=resize_mode,
@@ -325,17 +287,13 @@ class CharacterRecipeNode:
             flip_horizontal=flip_pose_horizontal,
         )
 
-        # 生成三合一横向参考拼图（人像 | 服装 | 姿势）
+        # Side-by-side reference sheet: portrait | costume | pose
         from PIL import Image, ImageOps
 
         panel_h = max(256, int(height))
         panel_w = max(256, int(width))
-        p1 = ImageOps.fit(
-            portrait_pil, (panel_w, panel_h), method=Image.Resampling.LANCZOS
-        )
-        p2 = ImageOps.fit(
-            costume_pil, (panel_w, panel_h), method=Image.Resampling.LANCZOS
-        )
+        p1 = ImageOps.fit(portrait_pil, (panel_w, panel_h), method=Image.Resampling.LANCZOS)
+        p2 = ImageOps.fit(costume_pil, (panel_w, panel_h), method=Image.Resampling.LANCZOS)
         p3 = ImageOps.fit(pose_pil, (panel_w, panel_h), method=Image.Resampling.LANCZOS)
         gap = 12
         composite = Image.new("RGB", (panel_w * 3 + gap * 2, panel_h), (24, 24, 29))
@@ -343,42 +301,36 @@ class CharacterRecipeNode:
         composite.paste(p2, (panel_w + gap, 0))
         composite.paste(p3, ((panel_w + gap) * 2, 0))
 
-        portrait_zh, portrait_en = _build_portrait_prompts(portrait_item)
-        costume_zh, costume_en = _build_costume_prompts(costume_item)
-        pose_zh, pose_en = _build_pose_prompts(pose_item)
-        style_zh, style_en = STYLE_PRESETS.get(
-            style_preset, STYLE_PRESETS["高清日系动漫"]
-        )
-
+        portrait_p = _portrait_prompt(portrait_item)
+        costume_desc, costume_kw = _costume_prompts(costume_item)
+        pose_p = _pose_prompt(pose_item)
+        style = STYLE_PRESETS.get(style_preset, STYLE_PRESETS[DEFAULT_STYLE])
         extra_clean = (extra_prompt or "").strip()
-        zh_parts = [
-            f"请融合参考图生成一张完整的角色立绘：{style_zh}。",
-            f"【人像与发型】{portrait_zh}；",
-            f"【服装与配饰】{costume_zh}；",
-            f"【身体姿势与构图】{pose_zh}。",
+
+        instruction = [
+            f"Combine the reference images into one complete character illustration. Style: {style}.",
+            f"Face and hair: take from the portrait reference ({portrait_p}).",
+            f"Outfit: take from the costume reference ({costume_kw}).",
+            f"Body pose and framing: follow the pose reference ({pose_p}).",
         ]
         if extra_clean:
-            zh_parts.append(f"【补充细节】{extra_clean}。")
-        zh_parts.append(
-            "要求人物面部自然生动，服装穿戴贴合身体动态，肢体透视与手部结构准确，光影和谐统一。"
+            instruction.append(f"Additional details: {extra_clean}.")
+        instruction.append(
+            "Keep the face natural and expressive, the outfit fitted to the body's motion, "
+            "correct limb perspective and hand anatomy, and consistent lighting."
         )
 
-        en_parts = [
-            style_en,
-            portrait_en,
-            f"wearing {costume_en}",
-            pose_en,
-        ]
+        tags = [style, portrait_p, f"wearing {costume_kw}", pose_p]
         if extra_clean:
-            en_parts.append(extra_clean)
+            tags.append(extra_clean)
 
         return (
             _pil_to_comfy_tensor(portrait_pil),
             _pil_to_comfy_tensor(costume_pil),
             _pil_to_comfy_tensor(pose_pil),
             _pil_to_comfy_tensor(composite),
-            "".join(zh_parts),
-            ", ".join(en_parts),
+            " ".join(instruction),
+            ", ".join(tags),
         )
 
 
@@ -390,8 +342,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "PoseGalleryNode": "AI 姿势参考图 (Pose Gallery)",
-    "CostumeGalleryNode": "AI 服装参考图 (Costume Gallery)",
-    "PortraitGalleryNode": "AI 人像参考图 (Portrait Gallery)",
-    "CharacterRecipeNode": "AI 角色三合一合成配方 (3-in-1 Recipe)",
+    "PoseGalleryNode": "Pose Gallery (AI Reference)",
+    "CostumeGalleryNode": "Costume Gallery (AI Reference)",
+    "PortraitGalleryNode": "Portrait Gallery (AI Reference)",
+    "CharacterRecipeNode": "Character Recipe 3-in-1 (AI Reference)",
 }

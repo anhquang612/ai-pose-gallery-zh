@@ -4,38 +4,57 @@ import { api } from "../../scripts/api.js";
 const LIBRARIES = {
   pose: {
     key: "pose",
-    label: "姿势库 (1,439)",
-    shortLabel: "姿势",
+    label: "Poses (1,439)",
+    shortLabel: "Pose",
     defaultId: "full_single_P001_front",
     titleField: "姿势名称",
     primaryField: "分类",
     secondaryField: "角度",
-    primaryPlaceholder: "全部动作分类",
-    secondaryPlaceholder: "全部视角",
+    primaryPlaceholder: "All pose categories",
+    secondaryPlaceholder: "All angles",
   },
   costume: {
     key: "costume",
-    label: "服装库 (3,224)",
-    shortLabel: "服装",
+    label: "Costumes (3,224)",
+    shortLabel: "Costume",
     defaultId: "SPR-0001",
     titleField: "服装名称",
     primaryField: "一级分类",
     secondaryField: "分类",
-    primaryPlaceholder: "全部 · 现实 / 二次元",
-    secondaryPlaceholder: "全部服装分类",
+    primaryPlaceholder: "All · Realistic / Anime",
+    secondaryPlaceholder: "All costume categories",
   },
   portrait: {
     key: "portrait",
-    label: "人像库 (1,499)",
-    shortLabel: "人像",
+    label: "Portraits (1,499)",
+    shortLabel: "Portrait",
     defaultId: "f71f980dde3",
     titleField: "发型名称",
     primaryField: "发长",
     secondaryField: "分区",
-    primaryPlaceholder: "全部发长",
-    secondaryPlaceholder: "全部分区",
+    primaryPlaceholder: "All hair lengths",
+    secondaryPlaceholder: "All sections",
   },
 };
+
+// --- English localization layer (local addition) ---
+let I18N = {};
+async function loadI18n() {
+  if (Object.keys(I18N).length) return;
+  try {
+    const resp = await api.fetchApi("/pose_character_atlas/i18n");
+    if (resp.ok) I18N = await resp.json();
+  } catch (e) {
+    console.warn("[PoseAtlas] i18n load failed", e);
+  }
+}
+function t(text) {
+  if (!text) return text;
+  if (I18N[text]) return I18N[text];
+  const i = text.indexOf("・");
+  if (i > 0 && I18N[text.slice(0, i)]) return `${I18N[text.slice(0, i)]} · ${t(text.slice(i + 1))}`;
+  return text;
+}
 
 const NODE_LIB_MAP = {
   PoseGalleryNode: "pose",
@@ -62,7 +81,7 @@ async function fetchCatalogue(lib) {
     `/pose_character_atlas/catalogue?library=${encodeURIComponent(lib)}`
   );
   if (!resp.ok) {
-    throw new Error(`加载 ${lib} 图库失败: HTTP ${resp.status}`);
+    throw new Error(`Failed to load ${lib} library: HTTP ${resp.status}`);
   }
   const data = await resp.json();
   catalogueCache[lib] = (data.items || []).map((item) => lib === "costume" ? { ...item, 一级分类: item["一级分类"] || "现实" } : item);
@@ -81,8 +100,13 @@ function getThumbUrl(lib, id, relPath, useDepth = false) {
 }
 
 function getItemTitle(lib, item) {
+  // Costume names are long free-text Chinese; use the English keyword field instead.
+  if (lib === "costume" && item["关键词"]) {
+    const kw = item["关键词"];
+    return kw.length > 90 ? kw.slice(0, 87) + "..." : kw;
+  }
   const cfg = LIBRARIES[lib];
-  return (
+  return t(
     item[cfg.titleField] ||
     item["标题"] ||
     item["姿势名称"] ||
@@ -121,7 +145,7 @@ class PoseAtlasModal {
     this.activeLib = "pose";
     this.targetNode = null;
     this.mode = "single"; // "single" | "recipe"
-    this.safeMode = true;
+    this.safeMode = false; // local: NSFW unlocked by default
     this.useDepth = false;
     this.searchQuery = "";
     this.primaryFilter = "";
@@ -138,6 +162,7 @@ class PoseAtlasModal {
 
   async open({ node = null, initialLib = "pose", mode = "single" } = {}) {
     injectStylesheet();
+    await loadI18n();
     this.targetNode = node;
     this.mode = mode;
     this.activeLib = initialLib;
@@ -186,22 +211,22 @@ class PoseAtlasModal {
         <div class="pca-header">
           <div class="pca-title-group">
             <div>
-              <h3 class="pca-title">AI 角色三合一参考图集 (ComfyUI 选图器)</h3>
-              <div class="pca-subtitle">6,162 条中文参考索引 · Shisei / wquguru CC0 · 二次元图片需联网 · <a href="https://github.com/taki-ttt/charadb/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">CharaDB来源条款</a></div>
+              <h3 class="pca-title">AI Character Reference Library (ComfyUI Picker)</h3>
+              <div class="pca-subtitle">6,162 references · Shisei / wquguru CC0 · anime costumes load online · <a href="https://github.com/taki-ttt/charadb/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">CharaDB terms</a></div>
             </div>
           </div>
           <div class="pca-tabs" id="pca-tabs"></div>
-          <button class="pca-btn" id="pca-close-btn">关闭 ✕</button>
+          <button class="pca-btn" id="pca-close-btn">Close ✕</button>
         </div>
         <div class="pca-toolbar">
-          <input class="pca-search-input" id="pca-search" type="text" placeholder="搜索中文标题、动作、服装、发型、编号 (如: 坐姿 / 水手服 / 双马尾 / SPR-0001)..." />
+          <input class="pca-search-input" id="pca-search" type="text" placeholder="Search English or Chinese: title, pose, outfit, hairstyle, ID (e.g. sitting / sailor / bob / SPR-0001)..." />
           <select class="pca-select" id="pca-filter-primary"></select>
           <select class="pca-select" id="pca-filter-secondary"></select>
-          <select class="pca-select" aria-label="服装来源" id="pca-filter-source"><option value="">全部来源</option><option value="gia">ギア · 写实</option><option value="gia-anime">ギア · 动漫</option><option value="charadb">CharaDB</option><option value="shisei">Shisei · 中国历代</option></select>
-          <button class="pca-btn" id="pca-depth-btn">${this.useDepth ? "🌗 深度图 (Depth)" : "🗿 素体白模"}</button>
-          <button class="pca-btn" id="pca-sfw-btn">${this.safeMode ? "🛡️ 安全模式 (SFW)" : "🔞 18+ 完整模式"}</button>
-          <button class="pca-btn" id="pca-random-btn">🎲 随机抽一张</button>
-          <button class="pca-btn" id="pca-reset-btn">重置筛选</button>
+          <select class="pca-select" aria-label="Costume source" id="pca-filter-source"><option value="">All sources</option><option value="gia">Gia · Realistic</option><option value="gia-anime">Gia · Anime</option><option value="charadb">CharaDB (anime)</option><option value="shisei">Shisei · Chinese historical</option></select>
+          <button class="pca-btn" id="pca-depth-btn">${this.useDepth ? "🌗 Depth map" : "🗿 Mannequin"}</button>
+          <button class="pca-btn" id="pca-sfw-btn">${this.safeMode ? "🛡️ Safe mode (SFW)" : "🔞 18+ full mode"}</button>
+          <button class="pca-btn" id="pca-random-btn">🎲 Random</button>
+          <button class="pca-btn" id="pca-reset-btn">Reset filters</button>
         </div>
         <div class="pca-grid-wrap">
           <div class="pca-grid" id="pca-grid"></div>
@@ -209,10 +234,10 @@ class PoseAtlasModal {
         <div class="pca-footer">
           <div class="pca-recipe-slots" id="pca-recipe-slots"></div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <button class="pca-btn" id="pca-prev-page">上一页</button>
+            <button class="pca-btn" id="pca-prev-page">Prev</button>
             <span id="pca-page-info" style="font-size:12px;color:#9ca3af;">1 / 1</span>
-            <button class="pca-btn" id="pca-next-page">下一页</button>
-            <button class="pca-btn pca-btn-primary" id="pca-apply-btn">确认应用到节点</button>
+            <button class="pca-btn" id="pca-next-page">Next</button>
+            <button class="pca-btn pca-btn-primary" id="pca-apply-btn">Apply to node</button>
           </div>
         </div>
       </div>
@@ -258,7 +283,7 @@ class PoseAtlasModal {
     const depthBtn = backdrop.querySelector("#pca-depth-btn");
     depthBtn.addEventListener("click", () => {
       this.useDepth = !this.useDepth;
-      depthBtn.textContent = this.useDepth ? "🌗 深度图 (Depth)" : "🗿 素体白模";
+      depthBtn.textContent = this.useDepth ? "🌗 Depth map" : "🗿 Mannequin";
       if (this.targetNode) {
         setWidgetValue(this.targetNode, "costume_view", this.costumeView);
       setWidgetValue(this.targetNode, "use_depth", this.useDepth);
@@ -270,14 +295,11 @@ class PoseAtlasModal {
     const sfwBtn = backdrop.querySelector("#pca-sfw-btn");
     sfwBtn.addEventListener("click", () => {
       if (this.safeMode) {
-        if (!window.confirm("是否关闭安全模式并显示 18+ 敏感参考分类（性感姿势、双人缠绵、内衣穿搭）？请确认您已年满 18 周岁。")) {
-          return;
-        }
         this.safeMode = false;
       } else {
         this.safeMode = true;
       }
-      sfwBtn.textContent = this.safeMode ? "🛡️ 安全模式 (SFW)" : "🔞 18+ 完整模式";
+      sfwBtn.textContent = this.safeMode ? "🛡️ Safe mode (SFW)" : "🔞 18+ full mode";
       this.page = 1;
       this.populateFilters();
       this.renderGrid();
@@ -343,7 +365,7 @@ class PoseAtlasModal {
     this.renderTabs();
 
     const gridEl = this.backdrop.querySelector("#pca-grid");
-    gridEl.innerHTML = `<div style="padding:40px;color:#9ca3af;">正在加载 ${LIBRARIES[lib].label}...</div>`;
+    gridEl.innerHTML = `<div style="padding:40px;color:#9ca3af;">Loading ${LIBRARIES[lib].label}...</div>`;
 
     await fetchCatalogue(lib);
     this.populateFilters();
@@ -374,7 +396,7 @@ class PoseAtlasModal {
     Array.from(primarySet).forEach((val) => {
       const opt = document.createElement("option");
       opt.value = val;
-      opt.textContent = val;
+      opt.textContent = t(val);
       pSelect.appendChild(opt);
     });
     pSelect.value = this.primaryFilter;
@@ -388,7 +410,7 @@ class PoseAtlasModal {
       Array.from(secondarySet).forEach((val) => {
         const opt = document.createElement("option");
         opt.value = val;
-        opt.textContent = val;
+        opt.textContent = t(val);
         sSelect.appendChild(opt);
       });
       sSelect.value = this.secondaryFilter;
@@ -421,8 +443,9 @@ class PoseAtlasModal {
       }
       if (q) {
         const title = getItemTitle(this.activeLib, it);
+        const enTags = (it["标签"] || []).map(t).join(" ");
         const hay =
-          `${it.id || ""} ${title} ${it["检索"] || ""} ${it["分类"] || ""}`.toLowerCase();
+          `${it.id || ""} ${title} ${it["检索"] || ""} ${it["分类"] || ""} ${t(it["分类"] || "")} ${t(it["体系"] || "")} ${t(it["角度"] || "")} ${t(it["发长"] || "")} ${t(it["发型名称"] || "")} ${t(it["姿势名称"] || "")} ${enTags}`.toLowerCase();
         return hay.includes(q);
       }
       return true;
@@ -438,7 +461,7 @@ class PoseAtlasModal {
     const slice = filtered.slice(start, start + PAGE_SIZE);
 
     const pageInfo = this.backdrop.querySelector("#pca-page-info");
-    pageInfo.textContent = `第 ${this.page} / ${totalPages} 页（共 ${filtered.length} 项）`;
+    pageInfo.textContent = `Page ${this.page} / ${totalPages} (${filtered.length} items)`;
 
     const gridEl = this.backdrop.querySelector("#pca-grid");
     gridEl.innerHTML = "";
@@ -452,15 +475,16 @@ class PoseAtlasModal {
       const card = document.createElement("div");
       card.className = `pca-card ${item.id === selectedId ? "selected" : ""}`;
       const title = getItemTitle(this.activeLib, item);
-      const badge =
+      const badge = t(
         (cfg.secondaryField && item[cfg.secondaryField]) ||
         item[cfg.primaryField] ||
-        "";
+        ""
+      );
       const subText =
-        (item[cfg.primaryField] || "") +
+        t(item[cfg.primaryField] || "") +
         (cfg.secondaryField && item[cfg.secondaryField]
-          ? ` · ${item[cfg.secondaryField]}`
-          : "") + (item.source === "charadb" ? " · たき AI / CharaDB" : "");
+          ? ` · ${t(item[cfg.secondaryField])}`
+          : "") + (item.source === "charadb" ? " · Taki AI / CharaDB" : "");
 
       card.innerHTML = `
         <div class="pca-card-img-wrap">
@@ -477,10 +501,10 @@ class PoseAtlasModal {
       if (original.views?.length) {
         const select = document.createElement("select");
         select.className = "pca-select";
-        select.setAttribute("aria-label", "服装视角");
+        select.setAttribute("aria-label", "Costume view");
         original.views.forEach((view) => {
           const option = document.createElement("option");
-          option.value = view.id; option.textContent = view.label;
+          option.value = view.id; option.textContent = t(view.label);
           select.appendChild(option);
         });
         select.value = chosenView.id;
@@ -595,28 +619,28 @@ function attachNodePreviewWidget(node, nodeKind) {
       const slots = [
         {
           lib: "portrait",
-          label: "人像",
+          label: "Portrait",
           val:
             findWidget(node, "portrait_id")?.value ||
             LIBRARIES.portrait.defaultId,
         },
         {
           lib: "costume",
-          label: "服装",
+          label: "Costume",
           val:
             findWidget(node, "costume_id")?.value ||
             LIBRARIES.costume.defaultId,
         },
         {
           lib: "pose",
-          label: useDepth ? "姿势(深度)" : "姿势",
+          label: useDepth ? "Pose (depth)" : "Pose",
           val: findWidget(node, "pose_id")?.value || LIBRARIES.pose.defaultId,
         },
       ];
       slots.forEach((s) => {
         const card = document.createElement("div");
         card.className = "pca-node-thumb-card";
-        card.title = `点击更换${s.label}参考图`;
+        card.title = `Click to change ${s.label} reference`;
         card.innerHTML = `
           <img src="${(s.lib === "costume" ? `/pose_character_atlas/image?library=costume&id=${encodeURIComponent(s.val)}&kind=thumb&view=${encodeURIComponent(findWidget(node, "costume_view")?.value || "front")}` : getThumbUrl(s.lib, s.val, null, useDepth))}" alt="${s.val}" />
           <div class="pca-node-thumb-label">${s.label} #${s.val}</div>
@@ -631,10 +655,10 @@ function attachNodePreviewWidget(node, nodeKind) {
         findWidget(node, "image_id")?.value || LIBRARIES[nodeKind].defaultId;
       const card = document.createElement("div");
       card.className = "pca-node-thumb-card";
-      card.title = "点击打开图库选图";
+      card.title = "Click to open the library";
       card.innerHTML = `
         <img src="${(nodeKind === "costume" ? `/pose_character_atlas/image?library=costume&id=${encodeURIComponent(id)}&kind=thumb&view=${encodeURIComponent(findWidget(node, "costume_view")?.value || "front")}` : getThumbUrl(nodeKind, id, null, useDepth))}" alt="${id}" />
-        <div class="pca-node-thumb-label">${LIBRARIES[nodeKind].shortLabel}${nodeKind === "pose" && useDepth ? "(深度)" : ""} #${id}</div>
+        <div class="pca-node-thumb-label">${LIBRARIES[nodeKind].shortLabel}${nodeKind === "pose" && useDepth ? " (depth)" : ""} #${id}</div>
       `;
       card.addEventListener("click", () => {
         modalInstance.open({ node, initialLib: nodeKind, mode: "single" });
@@ -680,8 +704,8 @@ app.registerExtension({
 
       const btnLabel =
         nodeKind === "recipe"
-          ? "🎨 打开三合一选图器"
-          : `🖼️ 打开${LIBRARIES[nodeKind].shortLabel}图库选图`;
+          ? "🎨 Open 3-in-1 picker"
+          : `🖼️ Open ${LIBRARIES[nodeKind].shortLabel} library`;
 
       this.addWidget("button", btnLabel, null, () => {
         modalInstance.open({

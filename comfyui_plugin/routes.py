@@ -24,6 +24,35 @@ LIBRARY_FILES = {
 
 _CACHE: dict[str, list[dict]] = {}
 
+# --- English localization layer (local addition) ---
+I18N_FILE = DATA_DIR / "i18n-en.json"
+_I18N: dict[str, str] | None = None
+
+
+def load_i18n() -> dict[str, str]:
+    global _I18N
+    if _I18N is None:
+        try:
+            with open(I18N_FILE, encoding="utf-8") as f:
+                _I18N = json.load(f)
+        except FileNotFoundError:
+            _I18N = {}
+    return _I18N
+
+
+def tr(text: str) -> str:
+    """Translate a Chinese data label to English; compound 'A・B' labels are split recursively."""
+    if not text:
+        return text
+    m = load_i18n()
+    if text in m:
+        return m[text]
+    if "・" in text:
+        head, tail = text.split("・", 1)
+        if head in m:
+            return f"{m[head]} · {tr(tail)}"
+    return text
+
 
 def load_library(lib: str) -> list[dict]:
     if lib not in LIBRARY_FILES:
@@ -139,6 +168,10 @@ def register_routes() -> None:
             )
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
+
+    @routes.get("/pose_character_atlas/i18n")
+    async def get_i18n(request):
+        return web.json_response(load_i18n(), headers={"Cache-Control": "public, max-age=300"})
 
     @routes.get("/pose_character_atlas/image")
     async def get_image(request):
